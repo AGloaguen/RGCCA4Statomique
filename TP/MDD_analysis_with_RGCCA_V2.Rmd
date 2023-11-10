@@ -1,0 +1,922 @@
+---
+title: "Analysis of a cohort of Major Depressive Disorder (MDD) with RGCCA"
+author: "Arnaud Gloaguen"
+date: "`r date()`"
+bibliography: references.bib
+link-citations: true
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: false
+    code_folding: show
+    highlight: zenburn
+params:
+  work_dir: "//193.50.0.27/homeUnix/agloague/WINDOWS/Desktop/Statomique/RGCCA4Statomique/TP"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir=params$work_dir)
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format="html")
+setwd(params$work_dir)
+```
+
+# 1. Unsupervised One-block analysis with Principal Component Analysis (PCA) 
+
+## 1.1 Library installation/loading
+
+```{r libraries_loading, warning=FALSE, message=FALSE, results='hide'}
+
+# Load libraries
+library(FactoMineR)
+library(factoextra)
+library(ggpubr)
+library(corrplot)
+library(RGCCA)
+```
+
+
+## 1.2 Data Introduction
+
+**Slides 2 -> 5 of "RGCCA - Theory"**.
+
+## 1.3 Preliminary observation and manipulations
+
+Starts by doing a simple PCA on gene expression matrix.
+
+```{r, fig.height=8, fig.width=10, warning=FALSE, message=FALSE}
+##############
+
+# Starts from here 
+data.train = readRDS(file = "data/data.train")
+DNAm_covariates = readRDS("data/pd_mdd_bin.RDS")
+Sex = as.factor(data.train$cli$Sex)
+levels(Sex) = c("Female", "Male")
+
+# PCA on mRNA with full data-set
+pca_results <- PCA(data.train$mRNA, scale.unit=TRUE, ncp=25, graph=F) 
+
+fviz_pca_ind(pca_results, axes = c(1,2))+ 
+  geom_point(aes(colour = Sex)) +
+  guides(colour = guide_legend(title = "color"))
+
+```
+
+==> There is a strong "Sex" effect. Several methods exist in the literature to correct for Sex (or other batch) effects (ex: ComBat @Johnson2006)
+
+For the sake of simplicity, we will limit ourselves to the gender with the highest number of samples --> Females.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+# Function taken from CHAMP to help interpret factors
+drawheatmap <- function(svdPV.m, title = NULL, display_legend = FALSE) {
+  myPalette <- c("darkred", "red", "orange", "pink", "white")
+  breaks.v <- c(-10000, -10, -5, -2, log10(0.05), 0)
+  image(x = 1:nrow(svdPV.m), y = 1:ncol(svdPV.m), z = log10(svdPV.m),
+        col = myPalette, breaks = breaks.v, xlab = "", ylab = "",
+        axes = FALSE, main = paste0("Interpretation of the Components-", title))
+  axis(1, at = 1:nrow(svdPV.m), labels = paste("Comp-",
+                                               1:nrow(svdPV.m), sep = ""), las = 2)
+  suppressWarnings(axis(2, at = 1:ncol(svdPV.m), labels = colnames(svdPV.m),
+                        las = 2))
+  if(display_legend){
+    legend(x = 17, y = 10, legend = c(expression("p < 1x" ~ 10^{-10}),
+                                              expression("p < 1x" ~ 10^{-5}),
+                                              "p < 0.01", "p < 0.05", "p > 0.05"),
+         fill = c("darkred","red", "orange", "pink", "white"), par("usr")[2],
+         par("usr")[4], xpd = NA)
+  }
+}
+
+check_association_CHAMP <- function(x, y){
+  if(!is.numeric(y)){
+    return(kruskal.test(x ~ as.factor(y))$p.value)
+  }else{
+    return(summary(lm(x ~ y))$coeff[2, 4])
+  }
+}
+```
+ 
+## 1.4 Interpretation of the PCA components
+
+Once we are limited to Females, let's look back at PCA. Let us start with only two blocks (messenger RNA (mRNA) and DNA methylation (DNAm)). In order to better understand what the different PCA components represent, lets us borrow a technique from the R package Chip Analysis Methylation Pipeline (ChAMP) (@Morris2013 ; function "champ.SVD"; this function allows to test the association between PCA components (continuous) and either continuous (F-test) or discrete (Kruskal-Wallis test) covariates; **see slides 7 -> 8 of "RGCCA - Theory"**).
+
+**Figure below**: Components are interpreted in three cases : mRNA, DNAm and the concatenation of mRNA & DNAm. The last case is to see what a naïve integration can achieve and what are the limitations. Multiple remarks : 
+
+  - mRNA : Main effect of interest : the link with "Sample_group" (Patient(MDD)/Control) appears mainly in components 6 & 7. Though not the strongest link (for these components) each time.
+  - DNAm : Not any Principal Component (PC) is associated with "Sample_group".
+  - mRNA & DNAm : Association with "Sample_group" stays in PC7 and seems strengthened (it is the strongest link for this component!), which encourages integration. Drawbacks: 
+    (i) several strong other links are also described for this component and 
+    (ii) there isn't any control over the influence of each omic to contribute for a component. Indeed lets us look at the contribution of each variables.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+# Keep only female samples
+data.train.female = lapply(data.train, 
+                           function(x) x[which(data.train$cli$Sex == F), ])
+
+DNAm_covariates_female = DNAm_covariates[match(rownames(data.train.female$mRNA), 
+                                               DNAm_covariates$Sample_ID), ]
+
+covariates_explored = c("Sample_Group", "BMI", "BMI.bin", "Age", "Age.bin", 
+                        "Array", "Slide", "CD4", "CD8", "MO", "B", "NK", "GR")
+
+DNAm_covariates_explored_female = 
+  as.data.frame(DNAm_covariates_female[, covariates_explored])
+
+# mRNA
+pca_female_mRNA <- PCA(data.train.female$mRNA, scale.unit=TRUE, ncp=20, graph=F) 
+
+interp_pca_female_mRNA = apply(pca_female_mRNA$ind$coord, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+# DNAm
+pca_female_DNAm <- PCA(data.train.female$DNAm, scale.unit=TRUE, ncp=20, graph=F) 
+
+interp_pca_female_DNAm = apply(pca_female_DNAm$ind$coord, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+# mRNA & DNAm
+pca_female_mRNA_DNAm <- PCA(cbind(data.train.female$mRNA, 
+                                  data.train.female$DNAm), scale.unit=TRUE, 
+                            ncp=20, graph=F) 
+
+interp_pca_female_mRNA_DNAm = apply(pca_female_mRNA_DNAm$ind$coord, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 1), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_pca_female_mRNA), title = "Block mRNA")
+drawheatmap(t(interp_pca_female_DNAm), title = "Block DNAm", display_legend = T)
+drawheatmap(t(interp_pca_female_mRNA_DNAm), title = "Block mRNA & DNAm")
+```
+
+**Figure below**: Contribution of variables for Principal Component 7 for either the mRNA block or the concatenation of the mRNA and DNAm blocks. Remarks:
+
+  - If we focus on the Top 100 contributions, it is dominated by mRNA in the case of the concatenation of the mRNA and DNAm blocks.
+  - The components of interest (PC7) explains very little percentage of the total variance.
+  
+=> It might be interesting to look for methods that treat each omic as their own and allow to separately interpret the influence of each omics contributing to a "signal" of interest.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+# "var" = variables contributions.
+weights_pca_female_mRNA_DNAm = fviz_contrib(pca_female_mRNA_DNAm, 
+                                            choice = "var", axes = 7, 
+                                            top = 100) + 
+  labs(title =paste0("Block mRNA & DNAm - Contribution of variables to PC7", 
+                     "\nVariance Explained : ", pca_female_mRNA_DNAm$eig[7, 2]))
+weights_pca_female_mRNA = fviz_contrib(pca_female_mRNA, choice = "var", 
+                                            axes = 7, top = 100) + 
+  labs(title =paste0("Block mRNA - Contribution of variables to PC7", 
+                     "\nVariance Explained : ", pca_female_mRNA$eig[7, 2]))
+ggarrange(weights_pca_female_mRNA, weights_pca_female_mRNA_DNAm,
+                  ncol = 1)
+
+```
+
+**Figure below**: A Scree plot allows to visualize the variance explained by each component. Below are two Scree plots, one for the mRNA and one for the DNAm block. We can see that, apart from the first component, all principal components of the DNAm block explain a very low percentage of the total variance which is diffused across all components. Whereas for the mRNA block, the first 10 components seem to bear a signal. This might explain the fact that when the mRNA and DNAm blocks are concatenated, the influence of the mRNA block is greater.
+
+```{r, fig.height=6, fig.width=10, warning=FALSE, message=FALSE}
+par(mfrow = c(2, 1), omi = c(0, 0, 0, 0))
+barplot(pca_female_mRNA$eig[, 2], names.arg=1:nrow(pca_female_mRNA$eig), 
+        main = "mRNA - Scree Plot",
+        xlab = "Principal Components",
+        ylab = "Percentage of variances",
+        col ="steelblue", ylim = c(0, 25))
+# Add connected line segments to the plot
+lines(x = 1:nrow(pca_female_mRNA$eig), pca_female_mRNA$eig[, 2], 
+      type="b", pch=19, col = "red")
+
+barplot(pca_female_DNAm$eig[, 2], names.arg=1:nrow(pca_female_DNAm$eig), 
+        main = "DNAm - Scree Plot",
+        xlab = "Principal Components",
+        ylab = "Percentage of variances",
+        col ="steelblue", ylim = c(0, 25))
+# Add connected line segments to the plot
+lines(x = 1:nrow(pca_female_DNAm$eig), pca_female_DNAm$eig[, 2], 
+      type="b", pch=19, col = "red")
+
+```
+
+
+## 1.5 Establishing the Optimization Criterion of PCA in order to go further
+
+**Slides 9 -> 12 of "RGCCA - Theory"**.
+
+# 2. Unsupervised analysis of $2$-blocks with Partial Least Squares (PLS) and Canonical Correlation Analysis (CCA) 
+## 2.1 From PCA to PLS and CCA
+
+**Slides 13 -> 16 of "RGCCA - Theory"**.
+
+## 2.2 Application on the MDD dataset
+
+So Now, lets us apply PLS and CCA that we have just learnt about to the MDD data-set.
+
+**Figure below**: For both PLS and CCA, 10 components are extracted for each block. Similarly to PCA, we can interpret the influence of each computed components:
+
+  - mRNA components extracted with PLS.
+  - DNAm components extracted with PLS.
+  - mRNA components extracted with CCA.
+  - DNAm components extracted with CCA.
+  
+=> The interpretation of the components for CCA seems really alike, components must be really correlated.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+set.seed(27) #favorite number
+resampling = caret::createDataPartition(data.train.female$cli$Group, list = TRUE, p = 0.2)$Resample1
+data.validation.female = lapply(data.train.female, function(x) x[-resampling, ])
+data.test.female = lapply(data.train.female, function(x) x[resampling, ])
+
+
+PLS_female_mRNA_DNAm = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                           DNAm = data.train.female$DNAm), 
+                             connection = matrix(1, 2, 2) - diag(2), 
+                             tau = c(1, 1), 
+                             scheme = "horst", verbose = F, ncomp = 10)
+
+CCA_female_mRNA_DNAm = rgcca(blocks = list(mRNA = data.validation.female$mRNA, 
+                                           DNAm = data.validation.female$DNAm), 
+                             connection = matrix(1, 2, 2) - diag(2), 
+                             tau = c(0, 0), 
+                             scheme = "horst", verbose = F, ncomp = 10)
+
+
+interp_PLS_female_mRNA = apply(PLS_female_mRNA_DNAm$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_PLS_female_DNAm = apply(PLS_female_mRNA_DNAm$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_CCA_female_mRNA = apply(CCA_female_mRNA_DNAm$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female[-resampling, ], 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_CCA_female_DNAm = apply(CCA_female_mRNA_DNAm$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female[-resampling, ], 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+par(mfrow = c(2, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_PLS_female_mRNA), title = "PLS - Block mRNA")
+drawheatmap(t(interp_PLS_female_DNAm), title = "PLS - Block DNAm")
+drawheatmap(t(interp_CCA_female_mRNA), title = "CCA - Block mRNA")
+drawheatmap(t(interp_CCA_female_DNAm), title = "CCA - Block DNAm")
+```
+
+## 2.3 The need for regularization
+
+**Figure below**: Correlation between components for CCA between the DNAm and mRNA block for a train set (left) and a test set (right). On the train set, components are perfectly pairwise correlated (and uncorrelated to their unmatching components), though this is not the case at all on the test set. 
+
+=> The model is overfitting !!
+
+```{r, fig.height=8, fig.width=15, warning=FALSE, message=FALSE}
+# a = plot(CCA_female_mRNA_DNAm, type = "samples", comp = 1, bloc = 1, cex = 1.5)
+# b = plot(CCA_female_mRNA_DNAm, type = "samples", comp = 2, bloc = 1, cex = 1.5)
+# c = plot(CCA_female_mRNA_DNAm, type = "samples", comp = 3, bloc = 1, cex = 1.5)
+# d = plot(CCA_female_mRNA_DNAm, type = "samples", comp = 4, bloc = 1, cex = 1.5)
+# ggarrange(a, b, c, d , ncol = 2, nrow = 2)
+
+
+
+CCA_female_mRNA_DNAm_validation = rgcca_transform(rgcca_res = CCA_female_mRNA_DNAm, 
+                                                  blocks_test = list(mRNA = data.test.female$mRNA, 
+                                                                     DNAm = data.test.female$DNAm))
+colnames(CCA_female_mRNA_DNAm_validation$mRNA) = 
+  colnames(CCA_female_mRNA_DNAm$Y$mRNA) = 
+  paste0("mRNA - comp", 1:dim(CCA_female_mRNA_DNAm_validation$mRNA)[2])
+colnames(CCA_female_mRNA_DNAm_validation$DNAm) = 
+  colnames(CCA_female_mRNA_DNAm$Y$DNAm) = 
+  paste0("DNAm - comp", 1:dim(CCA_female_mRNA_DNAm_validation$mRNA)[2])
+
+par(mfrow = c(1, 2), omi = c(0, 0, 0, 0))
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm$Y), method = "number", main = "\n\n\n\nTrain Set")
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm_validation), method = "number",  main = "\n\n\n\nTest Set")
+```
+
+## 2.4 Regularized-CCA (R-CCA)
+
+**Slides 17 -> 18 of "RGCCA - Theory"**.
+
+=> Now let us apply R-CCA to the data-set, with an arbitrary low value of $\tau$ (0.1) for each block.
+
+**Figure below**: Correlation between each mRNA component and each DNAm component, for both TRAIN and TEST sets and for CCA/R-CCA/PLS. As mentioned before, CCA suffers from overfitting. PLS and R-CCA also but their first component seems to be spared, which is important as it is the first signal captured, so the main one. 
+
+```{r, fig.height=18, fig.width=10, warning=FALSE, message=FALSE}
+
+PLS_female_mRNA_DNAm_2 = 
+  rgcca(blocks = list(mRNA = data.validation.female$mRNA, 
+                      DNAm = data.validation.female$DNAm), 
+        connection = matrix(1, 2, 2) - diag(2), 
+        tau = c(1, 1), 
+        scheme = "horst", verbose = F, ncomp = 10)
+
+CCA_female_mRNA_DNAm_regu_2 = 
+  rgcca(blocks = list(mRNA = data.validation.female$mRNA, 
+                      DNAm = data.validation.female$DNAm), 
+        connection = matrix(1, 2, 2) - diag(2), 
+        tau = c(0.1, 0.1), 
+        scheme = "horst", verbose = F, ncomp = 10)
+
+
+PLS_female_mRNA_DNAm_validation = 
+  rgcca_transform(rgcca_res = PLS_female_mRNA_DNAm_2, 
+                  blocks_test = list(mRNA = data.test.female$mRNA, 
+                                     DNAm = data.test.female$DNAm))
+
+CCA_female_mRNA_DNAm_validation_regu = 
+  rgcca_transform(rgcca_res = CCA_female_mRNA_DNAm_regu_2, 
+                  blocks_test = list(mRNA = data.test.female$mRNA, 
+                                     DNAm = data.test.female$DNAm))
+colnames(PLS_female_mRNA_DNAm_validation$mRNA) = 
+  colnames(PLS_female_mRNA_DNAm_2$Y$mRNA) = 
+  paste0("mRNA - comp", 1:dim(PLS_female_mRNA_DNAm_validation$mRNA)[2])
+colnames(PLS_female_mRNA_DNAm_validation$DNAm) = 
+  colnames(PLS_female_mRNA_DNAm_2$Y$DNAm) = 
+  paste0("DNAm - comp", 1:dim(PLS_female_mRNA_DNAm_validation$mRNA)[2])
+
+colnames(CCA_female_mRNA_DNAm_validation_regu$mRNA) = 
+  colnames(CCA_female_mRNA_DNAm_regu_2$Y$mRNA) = 
+  paste0("mRNA - comp", 1:dim(CCA_female_mRNA_DNAm_validation_regu$mRNA)[2])
+colnames(CCA_female_mRNA_DNAm_validation_regu$DNAm) = 
+  colnames(CCA_female_mRNA_DNAm_regu_2$Y$DNAm) = 
+  paste0("DNAm - comp", 1:dim(CCA_female_mRNA_DNAm_validation_regu$mRNA)[2])
+
+par(mfrow = c(3, 2), omi = c(0, 0, 0, 0))
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm$Y), method = "number", main = "\nTrain Set - CCA")
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm_validation), method = "number",  main = "\nTest Set - CCA")
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm_regu_2$Y), method = "number", main = "\nTrain Set - RCCA")
+corrplot(Reduce(cor, CCA_female_mRNA_DNAm_validation_regu), method = "number",  main = "\nTest Set - RCCA")
+corrplot(Reduce(cor, PLS_female_mRNA_DNAm_2$Y), method = "number", main = "\nTrain Set - PLS")
+corrplot(Reduce(cor, PLS_female_mRNA_DNAm_validation), method = "number",  main = "\nTest Set - PLS")
+```
+
+## 2.5 Comparison of PLS and R-CCA on the MDD data-set
+
+**Figure below**: For both PLS and R-CCA, 10 components are extracted for each block. Similarly to PCA, we can interpret the influence of each computed components:
+
+  - mRNA components extracted with PLS.
+  - DNAm components extracted with PLS.
+  - mRNA components extracted with R-CCA.
+  - DNAm components extracted with R-CCA.
+  
+=> Is there any differences ? -> This is not obvious but as expected, R-CCA leads to components bearing slightly more the same meaning; whereas for PLS we have information specific to each bloc (this is light, but differences are essentially in components 4/5/6)
+
+=> GOOD NEWS: the DNAm now seems to bear a component that explains also the Patient/Control effect. Furthermore, this component seems to be more specific to the group effect than before (associated with only 2 other covariates, whereas before it was 3). Though, it is still only the 7th component (see next figure to see the corresponding % of variance explained by this component).
+
+```{r, fig.height=12, fig.width=12, warning=FALSE, message=FALSE}
+CCA_female_mRNA_DNAm_regu = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                                DNAm = data.train.female$DNAm), 
+                                  connection = matrix(1, 2, 2) - diag(2), 
+                                  tau = c(0.1, 0.1), 
+                                  scheme = "horst", verbose = F, ncomp = 10)
+
+interp_CCA_female_mRNA_regu = apply(CCA_female_mRNA_DNAm_regu$Y$mRNA, 2,
+                                    function(x) 
+                                      sapply(DNAm_covariates_explored_female, 
+                                             function(y) 
+                                               check_association_CHAMP(x, y)))
+interp_CCA_female_DNAm_regu = apply(CCA_female_mRNA_DNAm_regu$Y$DNAm, 2,
+                                    function(x) 
+                                      sapply(DNAm_covariates_explored_female, 
+                                             function(y) 
+                                               check_association_CHAMP(x, y)))
+par(mfrow = c(2, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_PLS_female_mRNA), title = "PLS - Block mRNA")
+drawheatmap(t(interp_PLS_female_DNAm), title = "PLS - Block DNAm")
+drawheatmap(t(interp_CCA_female_mRNA_regu), title = "R-CCA - Block mRNA")
+drawheatmap(t(interp_CCA_female_DNAm_regu), title = "R-CCA - Block DNAm")
+```
+
+**Figure below**: Let us look closer at what is inside component 7. For both methods, we can display the sample space (here component 7 of the mRNA block against component 7 of the DNAM block). We can see that these two components are quite correlated and indeed seems do be catching a group effect. Then we can also display the contribution (block-weight vector) of each variable to the component of its block. For the sake of space, we only display the top 10 contributing variable for each method and each block. This helps interpreting what variables were used to compute these components. Then it is possible to try going deeper into the interpretation. For example "ENSG00000153234" seems interesting (see below information taken from https://www.uniprot.org):
+
+```
+Protein: Nuclear receptor subfamily 4 group A member 2
+
+Gene: NR4A2
+
+Function: Transcriptional regulator which is important for the differentiation and maintenance of meso-diencephalic dopaminergic (mdDA) neurons during development. It is crucial for expression of a set of genes such as SLC6A3, SLC18A2, TH and DRD2 which are essential for development of mdDA neurons (By similarity).
+```
+This gene was already present in top genes of PCA.
+
+==> But how can we add the micro-RNA (miRNA) block now ?
+
+```{r, fig.height=12, fig.width=12, warning=FALSE, message=FALSE, fig.show='hide'}
+
+a = plot(PLS_female_mRNA_DNAm, type = "samples", response = data.train.female$cli$Group, cex = 1.5, comp = 7) + ylim(c(-1, 1)) + xlim(c(-1.5, 1.5)) + ggtitle("PLS\nSample space")
+b = plot(CCA_female_mRNA_DNAm_regu, type = "samples", response = data.train.female$cli$Group, cex = 1.5, comp = 7)+ ylim(c(-1, 1))+ xlim(c(-1.5, 1.5)) + ggtitle("R-CCA\nSample space")
+c = plot(PLS_female_mRNA_DNAm, type = "weights", comp = 7, bloc = 1, cex = 1.5, n = 10)
+d = plot(CCA_female_mRNA_DNAm, type = "weights", comp = 7, bloc = 1, cex = 1.5, n = 10)
+e = plot(PLS_female_mRNA_DNAm, type = "weights", comp = 7, bloc = 2, cex = 1.5, n = 10)
+f = plot(CCA_female_mRNA_DNAm, type = "weights", comp = 7, bloc = 2, cex = 1.5, n = 10)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, ncol = 2, nrow = 3)
+
+```
+
+# 3. Unsupervised analysis of $L$-blocks with Regularized Generalized Canonical Correlation Analysis (RGCCA) 
+
+
+## 3.1 RGCCA 
+
+**Slides 19 -> 22 of "RGCCA - Theory"**.
+
+## 3.2 Application of RGCCA to the MDD dataset
+
+### 3.2.1 Impact of $\tau$
+
+Now let us apply RGCCA to our data-set. In order to be as close as possible to the methods above, let us apply it when: 
+
+  - For each block $\tau = 0.1$ (close to CCA) or $1$ (PLS)
+  - Function $g(x) = x$ (a.k.a Horst scheme)
+  - All blocks are connected (a.k.a. Complete design)
+
+**Figure below**: Differences: once again RGCCA $\tau = 0.1$ seems to have components describing the same information across all blocks. This is particularly true for the miRNA blocks that seems to have specific information when $\tau = 1$ (located mainly on the first components and the covariates describing cell composition).
+
+=> GOOD NEWS : The components mainly linked to the group effect has raised in position (3 for $\tau = 1$ - 4 and 9 for $\tau = 0.1$). This may be interpreted as the fact that this group effect is indeed common to each block and as such, is sooner/better catch by RGCCA. This has to be mitigated by the fact that a quite strong link to covariate "MO" is also catch by this component in the mRNA block. Furthermore see next figure for the pourcentage of explained variance by each component.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+set.seed(53)
+RGCCA_PLS_female = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                  miRNA = data.train.female$miRNA, 
+                                  DNAm = data.train.female$DNAm), 
+                    connection = matrix(1, 3, 3) - diag(3), 
+                    tau = c(1,1,1), scheme = "horst", verbose = F, ncomp = 10)
+
+interp_RGCCA_PLS_female_mRNA = apply(RGCCA_PLS_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_female_miRNA = apply(RGCCA_PLS_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_female_DNAm = apply(RGCCA_PLS_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+RGCCA_CCA_female = rgcca(blocks = list(mRNA = data.train.female$mRNA,
+                                  miRNA = data.train.female$miRNA,
+                                  DNAm = data.train.female$DNAm),
+                    connection = matrix(1, 3, 3) - diag(3),
+                    tau = c(0.1,0.1,0.1), scheme = "horst", verbose = F, ncomp = 10, init = "random")
+
+interp_RGCCA_CCA_female_mRNA = apply(RGCCA_CCA_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_CCA_female_miRNA = apply(RGCCA_CCA_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_CCA_female_DNAm = apply(RGCCA_CCA_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_RGCCA_PLS_female_mRNA), title = "\nRGCCA - tau = 1\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_CCA_female_mRNA), title = "\nRGCCA - tau = 0.1\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_PLS_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_CCA_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_PLS_female_DNAm), title = "Block DNAm")
+drawheatmap(t(interp_RGCCA_CCA_female_DNAm), title = "Block DNAm")
+```
+
+**Figure below**: Though raised in position, the components of interest, i.e. associated with Patient/Control (3 for $\tau = 1$ - 4 and 9 for $\tau = 0.1$), still explain a low percentage of the total variance.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+a = plot(RGCCA_PLS_female, type = "ave", comp = 4) + ggtitle("RGCCA - tau = 1\nAverage Variance Explained")
+b = plot(RGCCA_CCA_female, type = "ave", comp = 4) + ggtitle("RGCCA - tau = 0.1\nAverage Variance Explained")
+```
+
+
+```{r, fig.height=12, fig.width=14, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, nrow = 2, ncol  = 1)
+
+```
+
+### 3.2.2 Impact of the connection matrix
+
+Until now, all blocks were connected (a.k.a. Complete design). It might be too constraining. Indeed, each block might bear the group effect but not in the same way. Let us try a second design matrix where all blocks are connected to the mRNA bock only (referred to as a Hierarchical design).
+
+**Figure below**: Interpretation of the components for each block in the Hierarchical (left) or Complete (right) design. Observations:
+
+  - The component 3 is less clearly linked to the group effect for all blocks in the Hierarchical design.
+  - In the Hierarchical design, block are less constrained to be linked (especially block miRNA and DNAm) and they start having specific information that are extracted (see first component of DNAm and component 6 of miRNA). This seems to have impacted the group effect in a bad way (less commonly retrieve across all blocks.)
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+RGCCA_PLS_H_female = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                  miRNA = data.train.female$miRNA, 
+                                  DNAm = data.train.female$DNAm), 
+                    connection = matrix(c(0, 1, 1, 1, 0, 0, 1, 0, 0), ncol = 3, byrow = T), 
+                    tau = c(1,1,1), scheme = "horst", verbose = F, ncomp = 10)
+
+interp_RGCCA_PLS_H_female_mRNA = apply(RGCCA_PLS_H_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_H_female_miRNA = apply(RGCCA_PLS_H_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_H_female_DNAm = apply(RGCCA_PLS_H_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+RGCCA_PLS_C_female = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                  miRNA = data.train.female$miRNA, 
+                                  DNAm = data.train.female$DNAm), 
+                    connection = matrix(1, 3, 3) - diag(3), 
+                    tau = c(1,1,1), scheme = "horst", verbose = F, ncomp = 10)
+
+interp_RGCCA_PLS_C_female_mRNA = apply(RGCCA_PLS_C_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_female_miRNA = apply(RGCCA_PLS_C_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_female_DNAm = apply(RGCCA_PLS_C_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_RGCCA_PLS_H_female_mRNA), title = "\nRGCCA - tau = 1 - Hierarchical\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_female_mRNA), title = "\nRGCCA - tau = 1 - Complete\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_PLS_H_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_PLS_H_female_DNAm), title = "Block DNAm")
+drawheatmap(t(interp_RGCCA_PLS_C_female_DNAm), title = "Block DNAm")
+
+```
+
+### 3.2.3 Impact of the scheme function
+
+Lets us compare two schemes: 
+  - when $g(x) = x$ (a.k.a. Horst scheme), this is the scheme used since the beginning.
+  - when $g(x) = x^2$  (a.k.a. Factorial scheme). 
+  
+The particular interest of the Factorial scheme is that it allows to catch high effect that are positively or negatively correlated between blocks (Horst allows only positively). It also have the effect of decreasing low links (covariance below 1) and increasing higher ones (covariance above 1).
+
+**Figure below**: Interpretation of the components for each block with the Horst (left) or the Factorial (right) scheme. Observations:
+
+  - The component 3 is less clearly linked to the group effect for all blocks in the Factorial scheme.
+  - There are less pinks squares (lowest level of significance) for the Factorial scheme (43 for Factorial vs 56 for Horst).
+
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+RGCCA_PLS_C_Horst_female = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                  miRNA = data.train.female$miRNA, 
+                                  DNAm = data.train.female$DNAm), 
+                    connection = matrix(1, 3, 3) - diag(3), 
+                    tau = c(1,1,1), scheme = "horst", verbose = F, ncomp = 10)
+
+interp_RGCCA_PLS_C_Horst_female_mRNA = apply(RGCCA_PLS_C_Horst_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_Horst_female_miRNA = apply(RGCCA_PLS_C_Horst_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_Horst_female_DNAm = apply(RGCCA_PLS_C_Horst_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+RGCCA_PLS_C_Factorial_female = rgcca(blocks = list(mRNA = data.train.female$mRNA, 
+                                  miRNA = data.train.female$miRNA, 
+                                  DNAm = data.train.female$DNAm), 
+                    connection = matrix(1, 3, 3) - diag(3), 
+                    tau = c(1,1,1), scheme = "factorial", verbose = F, ncomp = 10)
+
+interp_RGCCA_PLS_C_Factorial_female_mRNA = apply(RGCCA_PLS_C_Factorial_female$Y$mRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_Factorial_female_miRNA = apply(RGCCA_PLS_C_Factorial_female$Y$miRNA, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+interp_RGCCA_PLS_C_Factorial_female_DNAm = apply(RGCCA_PLS_C_Factorial_female$Y$DNAm, 2,
+                               function(x) 
+                                 sapply(DNAm_covariates_explored_female, 
+                                        function(y) 
+                                          check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_RGCCA_PLS_C_Horst_female_mRNA), title = "\nRGCCA - tau = 1 - Complete - Horst\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_Factorial_female_mRNA), title = "\nRGCCA - tau = 1 - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_Horst_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_Factorial_female_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_PLS_C_Horst_female_DNAm), title = "Block DNAm")
+drawheatmap(t(interp_RGCCA_PLS_C_Factorial_female_DNAm), title = "Block DNAm")
+
+```
+
+## 3.3 Tunning parameters in an unsupervised analysis
+
+**Slides 23 of "RGCCA - Theory"**.
+
+Now, let us apply this permutation to our situation in order to tune the parameter $\tau$ (the RGCCA package also allows to optimize for the number of component). We set the RGCCA model to the Complete design with the Factorial scheme (Horst scheme was giving better results but we believe in the necessity to retrieve both highly positively or negatively correlated events). We choose to explore 20 values for $\tau$ in the interval [1e-4; 0.5], sampled in a logspace manner. For the sake of computational time, each block and each component are associated with the same value of tau (though one value of $\tau$ could have been specified for each combination). Furthermore, for the same reason, we limit ourselves to 6 components, as it seems that the relevant information is catch in these components. 30 permutations are performed 
+
+**Figure below**: Best set of parameters is:
+
+```
+      mRNA      miRNA       DNAm 
+0.05315656 0.05315656 0.05315656 
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+set_tau = sapply(data.train.female[1:3], function(x) pracma:::logseq(x1 = 1e-4, x2 = 0.5, n = 20))
+
+# # Not run
+# set.seed(53)
+# permutation_RGCCA_C_Factorial_female = rgcca_permutation(blocks = list(mRNA = data.train.female$mRNA,
+#                                                                        miRNA = data.train.female$miRNA,
+#                                                                        DNAm = data.train.female$DNAm),
+#                                                          connection = matrix(c(0, 1, 1, 1, 0, 1, 1, 1, 0), ncol = 3, byrow = T),
+#                                                          par_value = set_tau,
+#                                                          n_perms = 50, n_cores = 24, ncomp = 10, init = "random")
+# 
+# saveRDS(object = permutation_RGCCA_C_Factorial_female, "pre_computed_results/permutation_RGCCA_C_Factorial_female_V3.rds")
+permutation_RGCCA_C_Factorial_female = readRDS("pre_computed_results/permutation_RGCCA_C_Factorial_female_V3.rds")
+
+plot(permutation_RGCCA_C_Factorial_female)
+```
+
+## 3.4 Bootstrapping: a way of assessing the robustness of the tuned model
+
+Now that we optimized the set of parameters for our model, we wish to evaluate its robustness. This is going to be performed through bootstrapping.
+
+**Slides 23 of "RGCCA - Theory"**.
+
+**Figure below**: 2000 bootstrap samples were generated. We are looking at the first 100 weights (black dots: they were estimated on the regular cohort, without resampling) with their estimated Confidence Interval (grey lines) for components 1/3/4 (the last two because it is where the association with the group effect is supposed to be). 
+
+=> Nothing is significant at all.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+# NOT RUN
+RGCCA_C_Factorial_female_bestPerm = rgcca(blocks = list(mRNA = data.train.female$mRNA,
+                                                        miRNA = data.train.female$miRNA,
+                                                        DNAm = data.train.female$DNAm),
+                                          connection = matrix(c(0, 1, 1, 1, 0, 1, 1, 1, 0), ncol = 3, byrow = T),
+                                          tau = permutation_RGCCA_C_Factorial_female$best_params, scheme = "factorial",
+                                          verbose = F, ncomp = 10, init = "random")
+# set.seed(6464)
+# bootstrap_RGCCA_C_Factorial_female_bestPerm = rgcca_bootstrap(RGCCA_C_Factorial_female_bestPerm , n_cores = 24, n_boot = 2000)
+# 
+# saveRDS(object = bootstrap_RGCCA_C_Factorial_female_bestPerm, file = "pre_computed_results/bootstrap_RGCCA_C_Factorial_female_bestPerm_V3.rds")
+bootstrap_RGCCA_C_Factorial_female_bestPerm = readRDS("pre_computed_results/bootstrap_RGCCA_C_Factorial_female_bestPerm_V3.rds")
+
+a = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 1)
+b = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 1)
+c = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 1)
+d = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 3)
+e = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 3)
+f = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 3)
+g = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 4)
+h = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 4)
+i = plot(bootstrap_RGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 4)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+=> What can we do to get out of this situation. Actually a lot of things: 
+
+  - I was really quick on the pre-processing and drop down all variables with NAs... actually, RGCCA can handle  missing values, it would be interesting to try with them.
+  - In the pre-processing steps, I kept only the first 2000 variables for DNAm and mRNA according to the Median Absolute Deviation (MAD). At least I could have respected the ratio of variables across blocks (so take more variables for DNAm as it is originally composed of ~700.000 CpGs against ~16.000 genes for the mRNA block).
+  - Parameters can be better better tuned. Here I forced them to be the same across all components and blocks.
+  - Try extensions of RGCCA that will be evoked at the end (especially Sparse GCCA to perform variable selection).
+  - I could have removed batch effects and/or unwanted effects. Here we can see strong association with GR, Age, BMI... This is not taken into account.
+  - And... we can supervise the model.
+  
+  
+# 4. Supervised analysis of $L$-blocks with RGCCA
+
+Here, our goal is to predict for Patient vs. Control, so we will supervise accordingly.
+
+**Slides 26 of "RGCCA - Theory"**.
+
+## 4.1 Cross-Validation
+
+In such situation, it is required to perform Cross-Validation in order to tune parameters to obtain the model with the best generalization capacity.
+
+We optimize for the parameter $\tau$ (for the same set of values as before). The prediction model used in the second step is a Linear Discriminant Analysis (LDA).
+
+We still select the Factorial scheme. Here, as we supervise, we are not forced to extract a high number of components and we can limit ourselves to 3 components per bloc (it is also less time consuming). Cross Validation was performed on the F1-score with 5 repetitions of a 5-folds Cross-Validation (CV). Furthermore, before performing the CV, we extracted 20% of the data-set as a test set to validate our model optimized on the train set (optimized with CV). The resampling to separated train and test was performed with stratification (in order for each sample to be representative of the original proportion of patients vs controls).
+
+**Figure below**: the best set of extracted parameters is:
+
+```
+ mRNA miRNA  DNAm group 
+ 
+1e-04 1e-04 1e-04 0e+00
+```
+
+=> Actually this set is on the borders of the grid... It would be interesting to explore lower values.
+
+```{r, warning=FALSE, message=FALSE}
+resampling = readRDS(file = "pre_computed_results/resampling4CV")
+
+data.validation.female = lapply(data.train.female, function(x) x[-resampling, ])
+data.test.female = lapply(data.train.female, function(x) x[resampling, ])
+  
+# # NOT RUN
+# set.seed(53)
+# crossValidation_RGCCA_HiearchicalSupervised_Factorial_female <- rgcca_cv(blocks = list(mRNA = data.validation.female$mRNA,
+#                                                                                        miRNA = data.validation.female$miRNA,
+#                                                                                        DNAm = data.validation.female$DNAm,
+#                                                                                        group = data.validation.female$cli$Group),
+#                                                                          response = 4, method = "rgcca",
+#                                                                          par_type = "tau", par_value = cbind(set_tau, 0),
+#                                                                          prediction_model = "lda", #caret::modelLookup()
+#                                                                          metric = "F1",
+#                                                                          k=5, n_run = 5,
+#                                                                          verbose = TRUE, n_cores = 24, ncomp = c(3, 3, 3, 1))
+# 
+# saveRDS(object = crossValidation_RGCCA_HiearchicalSupervised_Factorial_female, "pre_computed_results/crossValidation_RGCCA_HiearchicalSupervised_Factorial_female_V3.rds")
+
+crossValidation_RGCCA_HiearchicalSupervised_Factorial_female = readRDS("pre_computed_results/crossValidation_RGCCA_HiearchicalSupervised_Factorial_female_V3.rds")
+
+plot(crossValidation_RGCCA_HiearchicalSupervised_Factorial_female)
+```
+
+The Best model is learnt and then applied on the test set. The F1 score on the test set is rather high, "0.7272727", though, overfitting may still be present as the F1 score on the train set is "1".
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+
+RGCCA_HiearchicalSupervised_Factorial_female_bestCV = rgcca(crossValidation_RGCCA_HiearchicalSupervised_Factorial_female)
+RGCCA_HiearchicalSupervised_Factorial_female_bestCV$call$init = "random"
+
+predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV =
+  rgcca_predict(rgcca_res = RGCCA_HiearchicalSupervised_Factorial_female_bestCV, 
+                blocks_test = list(mRNA = data.test.female$mRNA, 
+                                   miRNA = data.test.female$miRNA, 
+                                   DNAm = data.test.female$DNAm, 
+                                   group = data.test.female$cli$Group), 
+                prediction_model = "lda", metric = "F1")
+print(predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$metric)
+# pairs(Reduce(cbind, predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection), col = as.factor(data.test.female$cli$Group), pch = 15)
+```
+
+## 4.2 Interpretation of the extracted components 
+
+**Figure below**: interpretation of the components for each bloc and on TRAIN or TEST sets. As expected by the supervision effect, the first component is highly linked to the group effect and this is the only effect explained. On the TEST set, this illustrates the overfitting. Though, as expected by the fact that the F1 score was high on the test set, there are still some relevant information extracted from the TRAIN set. The learnt model still seems to bear a certain generalization power (not as strong as expected on the TRAIN set obviously). Especially for the mRNA bloc, a little for the miRNA block and not at all for the DNAm block.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA = 
+  apply(RGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$mRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA =
+  apply(RGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$miRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm =
+  apply(RGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$DNAm, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA =
+  apply(predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$mRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA =
+  apply(predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$miRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm =
+  apply(predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$DNAm, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTRAIN SET _ RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTEST SET _ RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm), title = "Block DNAm")
+drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm), title = "Block DNAm")
+
+```
+
+## 4.3 Bootstrap
+
+We can still perform a bootstrap procedure in order to evaluate the robustness of the block-weight vectors and identify robust variables contributing to each component for each block. 
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+
+# # NOT RUN
+# set.seed(53)
+# bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV = rgcca_bootstrap(RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n_cores = 24, n_boot = 2000)
+# 
+# saveRDS(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, "pre_computed_results/bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_V3.rds")
+
+bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV = readRDS("pre_computed_results/bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_V3.rds")
+
+a = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 1, comp = 1)
+b = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 2, comp = 1)
+c = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 3, comp = 1)
+d = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 1, comp = 2)
+e = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 2, comp = 2)
+f = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 3, comp = 2)
+g = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 1, comp = 3)
+h = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 2, comp = 3)
+i = plot(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, n = 100, bloc = 3, comp = 3)
+```
+
+
+```{r, fig.height=18, fig.width=15, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+Bellow are the significant variables for each bock and each component. We can now try to perform enrichment analysis on each list associated with each component.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+
+weights_idx    = which(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$type == "weights")
+signif_weights = which((p.adjust(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$pval[weights_idx], method = "fdr")<=0.05))
+
+print("#################   Component 1   #################")
+idx_comp_1 = which(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$comp == 1)
+bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$var[intersect(signif_weights, idx_comp_1)]
+
+print("#################   Component 2   #################")
+idx_comp_2 = which(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$comp == 2)
+bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$var[intersect(signif_weights, idx_comp_2)]
+
+print("#################   Component 3   #################")
+idx_comp_3 = which(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$comp == 3)
+bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$var[intersect(signif_weights, idx_comp_3)]
+
+```
+
+# 5. Going futher with RGCCA
+
+**Slides 28 -> ? of "RGCCA - Theory"**.
+
+# 6. References
+
