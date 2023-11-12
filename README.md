@@ -31,3 +31,8 @@ BiocManager::install('mixOmics')
 
 ## Description
 TODO
+
+## Additional files
+Some of the pre-computed results were too headvy and could not fit in this github repository. You can download them at (this link will expire the 06/12/2024):
+https://filesender.renater.fr/?s=download&token=c31a084c-f6de-4861-be7e-ab0328095c7a
+Once downloaded, please, add them in the folder `TP/pre_computed_results`.
