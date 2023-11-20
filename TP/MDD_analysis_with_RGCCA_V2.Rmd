@@ -660,7 +660,7 @@ drawheatmap(t(interp_RGCCA_PLS_C_Factorial_female_DNAm), title = "Block DNAm")
 
 **Slides 23 of "RGCCA - Theory"**.
 
-Now, let us apply this permutation to our situation in order to tune the parameter $\tau$ (the RGCCA package also allows to optimize for the number of component). We set the RGCCA model to the Complete design with the Factorial scheme (Horst scheme was giving better results but we believe in the necessity to retrieve both highly positively or negatively correlated events). We choose to explore 20 values for $\tau$ in the interval [1e-4; 0.5], sampled in a logspace manner. For the sake of computational time, each block and each component are associated with the same value of tau (though one value of $\tau$ could have been specified for each combination). Furthermore, for the same reason, we limit ourselves to 6 components, as it seems that the relevant information is catch in these components. 30 permutations are performed 
+Now, let us apply this permutation to our situation in order to tune the parameter $\tau$ (the RGCCA package also allows to optimize for the number of component). We set the RGCCA model to the Complete design with the Factorial scheme (Horst scheme was giving better results but we believe in the necessity to retrieve both highly positively or negatively correlated events). We choose to explore 20 values for $\tau$ in the interval [1e-4; 0.5], sampled in a logspace manner. For the sake of computational time, each block and each component are associated with the same value of tau (though one value of $\tau$ could have been specified for each combination). 50 permutations are performed per tested parameters.
 
 **Figure below**: Best set of parameters is:
 
@@ -852,8 +852,8 @@ interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm =
                    check_association_CHAMP(x, y)))
 
 par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
-drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTRAIN SET _ RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
-drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTEST SET _ RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTRAIN SET - RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTEST SET - RGCCA - tau Opt CV - Complete - Factorial\nBlock mRNA")
 drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
 drawheatmap(t(interp_predictOnTest_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
 drawheatmap(t(interp_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm), title = "Block DNAm")
@@ -912,11 +912,387 @@ print("#################   Component 3   #################")
 idx_comp_3 = which(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$comp == 3)
 bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$var[intersect(signif_weights, idx_comp_3)]
 
+signif_weights_RGCCA_HiearchicalSupervised_Factorial_female_bestCV = unique(bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV$stats$var[signif_weights])
+
 ```
 
-# 5. Going futher with RGCCA
+# 5. Unsupervised analysis of $L$-blocks with Sparse Generalized Canonical Correlation Analysis (SGCCA)
 
-**Slides 28 -> ? of "RGCCA - Theory"**.
+## 5.1 SGCCA
 
-# 6. References
+**Slides 28 of "RGCCA - Theory"**.
+
+## 5.2 Tunning sparse parameters in an unsupervised analysis of the MDD data-set with SGCCA
+
+This time, permutation is applied in order to tune the **sparsity parameters s**. Similarly as before, we set the SGCCA model to the **Complete design** with the **Factorial scheme**. We choose to explore 20 values for **"s"**
+ in the interval $\left[\frac{1}{\sqrt{J_j}-1}; 1\right]$, sampled in a logspace manner. For the sake of computational time, each block and each component are associated with the same level of sparsity (i.e. not exactly the same value of "s" but around the same ratio of sparse values; though one value of "s" could have been specified for each combination). 50 permutations are performed per tested parameters.
+
+**Figure below:** Best set of parameters is:
+
+```{r, warning=FALSE, message=FALSE}
+
+set_sparsity = sapply(data.train.female[1:3], function(x) pracma:::logseq(x1 = 1/sqrt(ncol(x)-1), x2 = 1, n = 20))
+
+# # Not run
+# set.seed(53)
+# permutation_SGCCA_C_Factorial_female = rgcca_permutation(blocks = list(mRNA = data.train.female$mRNA,
+#                                                                        miRNA = data.train.female$miRNA,
+#                                                                        DNAm = data.train.female$DNAm),
+#                                                          connection = matrix(c(0, 1, 1, 1, 0, 1, 1, 1, 0), ncol = 3, byrow = T),
+#                                                          par_value = set_sparsity, par_type = "sparsity",
+#                                                          n_perms = 50, n_cores = 36, ncomp = 10, init = "random")
+# 
+# saveRDS(object = permutation_SGCCA_C_Factorial_female, "permutation_SGCCA_C_Factorial_female_V3.rds")
+permutation_SGCCA_C_Factorial_female = readRDS("pre_computed_results/permutation_SGCCA_C_Factorial_female_V3.rds")
+
+permutation_SGCCA_C_Factorial_female$best_params
+
+plot(permutation_SGCCA_C_Factorial_female)
+```
+
+## 5.3 `rgcca_stability()`: using bootstrapping to assess if variables are consistenly selected accross resamplings
+
+This time, bootstrapping is not used to estimated a confidence interval for each variable, but rather to assess if some of them are consistently selected across resamplings.
+
+**Slides 29 of “RGCCA - Theory”**.
+
+**Figure below:** 2000 bootstrap samples were generated. For each bootstrap sample the Variable Importance in Projection (VIP) is computed per variable and averaged across re-samples. Per block, only a certain percentage of variables are kept, in decreasing order of their averaged VIP. This percentage is taken as the proportion of selected variables per block (averaged across components) in the original model with the optimized (by permutation) sparse parameters. We are looking at the weights (for components 1/3/4) per block of all kept variables according to this procedure. These weights comes also from this original model.
+
+=> **Limits:** this procedure allows to identify the most stables variables. It does not guarantee that they are stable. 
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+# # NOT RUN
+# SGCCA_C_Factorial_female_bestPerm = rgcca(blocks = list(mRNA = data.train.female$mRNA,
+#                                                         miRNA = data.train.female$miRNA,
+#                                                         DNAm = data.train.female$DNAm),
+#                                           connection = matrix(c(0, 1, 1, 1, 0, 1, 1, 1, 0), ncol = 3, byrow = T),
+#                                           sparsity = permutation_SGCCA_C_Factorial_female$best_params, scheme = "factorial",
+#                                           verbose = F, ncomp = 10, init = "random")
+# set.seed(6464)
+# stability_SGCCA_C_Factorial_female_bestPerm = rgcca_stability(SGCCA_C_Factorial_female_bestPerm , n_cores = 36, n_boot = 2000)
+# 
+# saveRDS(object = stability_SGCCA_C_Factorial_female_bestPerm, file = "stability_SGCCA_C_Factorial_female_bestPerm_V3.rds")
+stability_SGCCA_C_Factorial_female_bestPerm = readRDS("pre_computed_results/stability_SGCCA_C_Factorial_female_bestPerm_V3.rds")
+
+a = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 1)
+b = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 1)
+c = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 1)
+d = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 3)
+e = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 3)
+f = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 3)
+g = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 4)
+h = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 4)
+i = plot(stability_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 4)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+## 5.4 Bootstrapping for estimating confidence intervals
+
+The variable selection step forbid to estimate confidence intervals for each variable. Indeed, in the previous resampling procedure, each SGCCA model is composed of a different set of variables. Thus aggregating their weights across resamplings is not advised. Here, the goal is to estimate confidence intervals in a RGCCA model (no variable selection anymore) comprising only the kept variables according to the previous procedure with `rgcca_stability()`.
+
+**Figure below:** 2000 bootstrap samples were generated. We are looking at the weights (black dots: they were estimated on the regular cohort, without resampling) of the kept variables with their estimated Confidence Interval (grey lines) for components 1/3/4.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+
+# # Not run
+# set.seed(53)
+# bootstrap_SGCCA_C_Factorial_female_bestPerm = rgcca_bootstrap(stability_SGCCA_C_Factorial_female_bestPerm , n_cores = 36, n_boot = 2000)
+# 
+# saveRDS(object = bootstrap_SGCCA_C_Factorial_female_bestPerm, file = "bootstrap_SGCCA_C_Factorial_female_bestPerm_V3.rds")
+bootstrap_SGCCA_C_Factorial_female_bestPerm = readRDS("pre_computed_results/bootstrap_SGCCA_C_Factorial_female_bestPerm_V3.rds")
+
+a = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 1)
+b = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 1)
+c = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 1)
+d = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 3)
+e = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 3)
+f = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 3)
+g = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 1, comp = 4)
+h = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 2, comp = 4)
+i = plot(bootstrap_SGCCA_C_Factorial_female_bestPerm, n = 100, bloc = 3, comp = 4)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+Bellow are the significant variables for each bock and each component. This time (thanks to `rgcca_stability()`), significant variables are identify for each block on the first three components. ==> Let us try to understand what signal was grasp by these components. 
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+
+weights_idx    = which(bootstrap_SGCCA_C_Factorial_female_bestPerm$stats$type == "weights")
+signif_weights = which((p.adjust(bootstrap_SGCCA_C_Factorial_female_bestPerm$stats$pval[weights_idx], method = "fdr")<=0.05))
+
+for (comp in 1:10){
+  print(sprintf("#################   Component %i   #################", comp))
+  idx_comp = which(bootstrap_SGCCA_C_Factorial_female_bestPerm$stats$comp == comp)
+  print(bootstrap_SGCCA_C_Factorial_female_bestPerm$stats$var[intersect(signif_weights, idx_comp)])
+}
+
+```
+
+## 5.5 Interpretation of the extracted components
+
+**Figure below:** interpretation of the components for each block. Unfortunately, the three first components, where significant variables are, mainly care information about blood cell composition and marginally with age (miRNA/DNAm) and batch effects (DNAm). The components link to patient/control (i.e. component 9 for mRNA, 4 for miRNA and 10 for DNAm) do not have significant variables associated with them.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+model_stability_SGCCA_C_Factorial_female_bestPerm = rgcca(blocks = list(mRNA = data.train.female$mRNA[, stability_SGCCA_C_Factorial_female_bestPerm$keepVar[[1]]],
+                                                                        miRNA = data.train.female$miRNA[, stability_SGCCA_C_Factorial_female_bestPerm$keepVar[[2]]],
+                                                                        DNAm = data.train.female$DNAm[, stability_SGCCA_C_Factorial_female_bestPerm$keepVar[[3]]]),
+                                                          connection = matrix(c(0, 1, 1, 1, 0, 1, 1, 1, 0), ncol = 3, byrow = T),
+                                                          tau = c(1, 1, 1), scheme = "factorial",
+                                                          verbose = F, ncomp = 10, init = "random")
+
+
+interp_model_stability_SGCCA_C_Factorial_female_bestPerm_mRNA = 
+  apply(model_stability_SGCCA_C_Factorial_female_bestPerm$Y$mRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female, 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_model_stability_SGCCA_C_Factorial_female_bestPerm_miRNA =
+  apply(model_stability_SGCCA_C_Factorial_female_bestPerm$Y$miRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female, 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_model_stability_SGCCA_C_Factorial_female_bestPerm_DNAm =
+  apply(model_stability_SGCCA_C_Factorial_female_bestPerm$Y$DNAm, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female, 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 1), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_model_stability_SGCCA_C_Factorial_female_bestPerm_mRNA), title = "SGCCA - Sparse parameters Opt Perm - Complete - Factorial\nBlock mRNA")
+drawheatmap(t(interp_model_stability_SGCCA_C_Factorial_female_bestPerm_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_model_stability_SGCCA_C_Factorial_female_bestPerm_DNAm), title = "Block DNAm")
+
+```
+
+# 6. Supervised analysis of $L$-blocks with SGCCA
+
+Here, our goal is to predict for Patient vs. Control, so we will supervise accordingly.
+
+## 6.1 Cross-Validation
+
+Similarly as before, we perform Cross-Validation in order to tune the sparse parameters **s** (for the same set of values as before) to obtain the model with the best generalization capacity. The prediction model used in the second step is again a Linear Discriminant Analysis (LDA).
+
+We still select the Factorial scheme. As mentioned before, as we supervise, we are not forced to extract a high number of components and we can limit ourselves to 3 components per bloc (it is also less time consuming). Cross Validation was performed on the F1-score with 5 repetitions of a 5-folds Cross-Validation (CV). Furthermore, before performing the CV, we extracted 20% of the data-set as a test set (the exact same resampling as with RGCCA) to validate our model optimized on the train set (optimized with CV). The resampling to separated train and test was performed with stratification (in order for each sample to be representative of the original proportion of patients vs controls).
+
+**Figure below:** the best set of extracted parameters is (the $0$ for the "group" block, the response block, means no supervision and $\tau=0$ to focus more on correlation):
+
+```{r, warning=FALSE, message=FALSE}
+resampling = readRDS(file = "pre_computed_results/resampling4CV")
+  
+# # NOT RUN
+# set.seed(53)
+# crossValidation_SGCCA_HiearchicalSupervised_Factorial_female <- rgcca_cv(blocks = list(mRNA = data.validation.female$mRNA,
+#                                                                                        miRNA = data.validation.female$miRNA,
+#                                                                                        DNAm = data.validation.female$DNAm,
+#                                                                                        group = data.validation.female$cli$Group),
+#                                                                          response = 4, method = "sgcca",
+#                                                                          par_type = "sparsity", par_value = cbind(set_sparsity, 1),
+#                                                                          prediction_model = "lda", #caret::modelLookup()
+#                                                                          metric = "F1",
+#                                                                          k=5, n_run = 5,
+#                                                                          verbose = TRUE, n_cores = 36, ncomp = c(3, 3, 3, 1))
+# 
+# saveRDS(object = crossValidation_SGCCA_HiearchicalSupervised_Factorial_female, "crossValidation_SGCCA_HiearchicalSupervised_Factorial_female_V3.rds")
+crossValidation_SGCCA_HiearchicalSupervised_Factorial_female = readRDS("pre_computed_results/crossValidation_SGCCA_HiearchicalSupervised_Factorial_female_V3.rds")
+
+crossValidation_SGCCA_HiearchicalSupervised_Factorial_female$best_params
+
+plot(crossValidation_SGCCA_HiearchicalSupervised_Factorial_female)
+```
+
+The Best model is learnt and then applied on the test set. The F1 score on the test set is rather high, "0.7" (against "0.7272727" with RGCCA), though, overfitting may still be present as the F1 score on the train set is "1" (even though this time, the selected set of parameters is not on the border of the interval).
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+
+SGCCA_HiearchicalSupervised_Factorial_female_bestCV = rgcca(crossValidation_SGCCA_HiearchicalSupervised_Factorial_female)
+SGCCA_HiearchicalSupervised_Factorial_female_bestCV$call$init = "random"
+
+predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV =
+  rgcca_predict(rgcca_res = SGCCA_HiearchicalSupervised_Factorial_female_bestCV, 
+                blocks_test = list(mRNA = data.test.female$mRNA, 
+                                   miRNA = data.test.female$miRNA, 
+                                   DNAm = data.test.female$DNAm, 
+                                   group = data.test.female$cli$Group), 
+                prediction_model = "lda", metric = "F1")
+print(predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV$metric)
+
+```
+
+## 6.2 Interpretation of the extracted components 
+
+**Figure below**: interpretation of the components for each bloc and on TRAIN or TEST sets. On the TRAIN set, the main caught affect is the group effect, as expected, though more residual effects are also present in the first component for example (Age for DNAm and Slide for miRNA... though a batch effect for DNAm) whereas none were present for this component with RGCCA. This might be linked to the fact that with SGCCA, $\tau$ is forced to be equal to $1$, thus less focusing on correlation. On the TEST set, this illustrates again the overfitting. This time, the learnt model seems only to bear a generalization power for the mRNA block (not for the miRNA bock anymore)..
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA = 
+  apply(SGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$mRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA =
+  apply(SGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$miRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm =
+  apply(SGCCA_HiearchicalSupervised_Factorial_female_bestCV$Y$DNAm, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[-resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA =
+  apply(predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$mRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA =
+  apply(predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$miRNA, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm =
+  apply(predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV$projection$DNAm, 2,
+        function(x) 
+          sapply(DNAm_covariates_explored_female[resampling, ], 
+                 function(y) 
+                   check_association_CHAMP(x, y)))
+
+par(mfrow = c(3, 2), omi = c(0, 0.7, 0, 0))
+drawheatmap(t(interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTRAIN SET - SGCCA - Sparse parameters Opt CV - Hiearchical - Factorial\nBlock mRNA")
+drawheatmap(t(interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_mRNA), title = "\nTEST SET - SGCCA - Sparse parameters Opt CV - Hiearchical - Factorial\nBlock mRNA")
+drawheatmap(t(interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_miRNA), title = "Block miRNA")
+drawheatmap(t(interp_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm), title = "Block DNAm")
+drawheatmap(t(interp_predictOnTest_SGCCA_HiearchicalSupervised_Factorial_female_bestCV_DNAm), title = "Block DNAm")
+
+```
+
+## 6.3 Evaluation of the stability of the variable selection step
+
+Once again, it is possible to use bootstrapping to evaluate the stability of the variable selection process.
+
+**Figure below:** 2000 bootstrap samples were generated. Below are the weights (for components 1/3/4) per block of all kept variables according to the procedure evaluating the stability of the selection process as described in section 5.3.
+
+=> Very few variables were kept: $4$, $3$ and $5$ for mRNA, miRNA and DNAm respectively.
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+# # NOT RUN
+# SGCCA_C_Factorial_female_bestCV = rgcca(blocks = list(mRNA = data.train.female$mRNA,
+#                                                       miRNA = data.train.female$miRNA,
+#                                                       DNAm = data.train.female$DNAm,
+#                                                       group = data.train.female$cli$Group),
+#                                         response = 4, method = "sgcca",
+#                                         sparsity = crossValidation_SGCCA_HiearchicalSupervised_Factorial_female$best_params, scheme = "factorial",
+#                                         verbose = F, ncomp = c(3, 3, 3, 1), init = "random")
+# set.seed(6464)
+# stability_SGCCA_C_Factorial_female_bestCV = rgcca_stability(SGCCA_C_Factorial_female_bestCV , n_cores = 36, n_boot = 2000)
+# 
+# saveRDS(object = stability_SGCCA_C_Factorial_female_bestCV, file = "stability_SGCCA_C_Factorial_female_bestCV_V3.rds")
+stability_SGCCA_C_Factorial_female_bestCV = readRDS("pre_computed_results/stability_SGCCA_C_Factorial_female_bestCV_V3.rds")
+
+a = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 1)
+b = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 1)
+c = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 1)
+d = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 2)
+e = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 2)
+f = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 2)
+g = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 3)
+h = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 3)
+i = plot(stability_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 3)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+
+## 6.4 Bootstrapping for estimating confidence intervals
+
+Once again, bootstap can be used to estimate confidence intervals for the most stable variables identified with rgcca_stability().
+
+**Figure below:** 2000 bootstrap samples were generated. We are looking at the weights (black dots: they were estimated on the regular cohort, without resampling) of the kept variables with their estimated Confidence Interval (grey lines) for components 1/2/3. 
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE, fig.show='hide'}
+
+# # Not run
+# set.seed(53)
+# bootstrap_SGCCA_C_Factorial_female_bestCV = rgcca_bootstrap(stability_SGCCA_C_Factorial_female_bestCV , n_cores = 36, n_boot = 2000)
+# 
+# saveRDS(object = bootstrap_SGCCA_C_Factorial_female_bestCV, file = "bootstrap_SGCCA_C_Factorial_female_bestCV_V3.rds")
+bootstrap_SGCCA_C_Factorial_female_bestCV = readRDS("pre_computed_results/bootstrap_SGCCA_C_Factorial_female_bestCV_V3.rds")
+
+a = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 1)
+b = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 1)
+c = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 1)
+d = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 2)
+e = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 2)
+f = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 2)
+g = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 1, comp = 3)
+h = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 2, comp = 3)
+i = plot(bootstrap_SGCCA_C_Factorial_female_bestCV, n = 100, bloc = 3, comp = 3)
+```
+
+
+```{r, fig.height=18, fig.width=16, warning=FALSE, message=FALSE}
+
+ggarrange(a, b, c, d, e, f, g, h, i, nrow = 3, ncol = 3)
+
+```
+
+It appears that all stable variables are significant for the first components.
+
+```{r, fig.height=6, fig.width=5, warning=FALSE, message=FALSE}
+
+weights_idx    = which(bootstrap_SGCCA_C_Factorial_female_bestCV$stats$type == "weights")
+signif_weights = which((p.adjust(bootstrap_SGCCA_C_Factorial_female_bestCV$stats$pval[weights_idx], method = "fdr")<=0.05))
+
+
+for (comp in 1:3){
+  print(sprintf("#################   Component %i   #################", comp))
+  idx_comp = which(bootstrap_SGCCA_C_Factorial_female_bestCV$stats$comp == comp)
+  print(bootstrap_SGCCA_C_Factorial_female_bestCV$stats$var[intersect(signif_weights, idx_comp)])
+}
+
+signif_weights_SGCCA_C_Factorial_female_bestCV = unique(bootstrap_SGCCA_C_Factorial_female_bestCV$stats$var[signif_weights])
+
+```
+
+If we try to intersect these variables with the significant ones identified through bootstrap with RGCCA in a supervised setting, it appears that all mRNA and DNAm variable were already present. However, only one miRNA amongst the three identified as stable was present previously. Sparsity may be more carefully tuned, especially for the miRNA block. 
+
+```{r, fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
+
+intersect(signif_weights_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, signif_weights_SGCCA_C_Factorial_female_bestCV)
+
+# length(intersect(signif_weights_RGCCA_HiearchicalSupervised_Factorial_female_bestCV, signif_weights_SGCCA_C_Factorial_female_bestCV)
+# )/length(signif_weights_SGCCA_C_Factorial_female_bestCV)
+```
+
+# 7. Going futher with RGCCA
+
+**Slides 30 -> ? of "RGCCA - Theory"**.
+
+# 8. References
+
+
 
