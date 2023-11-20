@@ -1,6 +1,8 @@
 TP/pre_computed_results/bootstrap_RGCCA_C_Factorial_female_bestPerm_V3.rds
 TP/pre_computed_results/bootstrap_RGCCA_HiearchicalSupervised_Factorial_female_bestCV_V3.rds
 TP/pre_computed_results/stability_SGCCA_C_Factorial_female_bestPerm_V3.rds
+TP/pre_computed_results/stability_SGCCA_C_Factorial_female_bestCV_V3.rds
+TP/pre_computed_results/bootstrap_SGCCA_C_Factorial_female_bestPerm_V3.rds
 RGCCA - Theory_V5_4Split.pptx
 RGCCA - Theory_V5.pptx
 .Rproj*
